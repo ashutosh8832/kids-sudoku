@@ -238,22 +238,6 @@ export default function SudokuGame() {
     return () => window.clearTimeout(id)
   }, [state.won])
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return
-    if (!("serviceWorker" in navigator)) return
-    const register = async () => {
-      try {
-        const registration = await navigator.serviceWorker.register("/sw.js", {
-          updateViaCache: "none",
-        })
-        await registration.update()
-      } catch {
-        // service worker unavailable, ignore
-      }
-    }
-    register()
-  }, [])
-
   const completed = useMemo(
     () => groupsCompleted(state.board, state.solution),
     [state.board, state.solution]
@@ -650,7 +634,7 @@ export default function SudokuGame() {
         </div>
 
         {/* Right column: difficulty, level + timer above the number pad */}
-        <div className="flex w-full flex-col items-stretch gap-3 min-[560px]:w-64">
+        <div className="flex w-full flex-col items-stretch gap-3 min-[560px]:w-64 sm:w-72">
           {/* Difficulty selector */}
           <div className="flex w-full items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm">
             <label
