@@ -1,4 +1,4 @@
-const CACHE_NAME = "kids-sudoku-cache-v2";
+const CACHE_NAME = "kids-sudoku-cache-v3";
 
 const APP_SHELL = ["/"];
 
@@ -9,48 +9,80 @@ const FALLBACK_PAGE =
   "<p style='font-size:1.4rem;text-align:center'>You are offline.<br>Turn your connection back on to play.</p>" +
   "</body></html>";
 
+function openCache() {
+  return caches.open(CACHE_NAME);
+}
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .catch(() => {})
-  );
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-      )
+    Promise.all([
+      openCache()
+        .then((cache) => cache.addAll(APP_SHELL))
+        .catch(() => {}),
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+        )
+        .catch(() => {}),
+    ])
   );
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(self.clients.claim().catch(() => {}));
 });
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-  event.respondWith(handle(event.request));
+  event.respondWith(respond(event.request));
 });
 
-async function handle(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request);
-  if (cached) return cached;
-
+async function respond(request) {
   try {
-    const response = await fetch(request);
-    if (response.ok) {
-      await cache.put(request, response.clone());
+    if (request.mode === "navigate") {
+      return await networkFirst(request);
     }
-    return response;
+    return await cacheFirst(request);
   } catch (error) {
-    const fallback = await cache.match("/");
-    if (fallback) return fallback;
+    const cached = await cacheMatch("/").catch(() => null);
+    if (cached) return cached;
     return new Response(FALLBACK_PAGE, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   }
+}
+
+async function cacheMatch(url) {
+  const cache = await openCache();
+  return cache.match(url);
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await openCache();
+      await cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
+  } catch (error) {
+    const cached = await cacheMatch(request).catch(() => null);
+    if (cached) return cached;
+    return new Response(FALLBACK_PAGE, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+}
+
+async function cacheFirst(request) {
+  const cached = await cacheMatch(request).catch(() => null);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok) {
+    const cache = await openCache();
+    await cache.put(request, response.clone()).catch(() => {});
+  }
+  return response;
 }
