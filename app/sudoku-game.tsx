@@ -241,7 +241,17 @@ export default function SudokuGame() {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") return
     if (!("serviceWorker" in navigator)) return
-    navigator.serviceWorker.register("/sw.js").catch(() => {})
+    const register = async () => {
+      try {
+        const registration = await navigator.serviceWorker.register("/sw.js", {
+          updateViaCache: "none",
+        })
+        await registration.update()
+      } catch {
+        // service worker unavailable, ignore
+      }
+    }
+    register()
   }, [])
 
   const completed = useMemo(
