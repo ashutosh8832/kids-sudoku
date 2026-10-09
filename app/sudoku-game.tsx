@@ -34,6 +34,7 @@ interface GameState {
   solution: Grid
   board: Grid
   notes: number[][][]
+  notesMode: boolean
   selected: [number, number] | null
   hintsUsed: number
   seconds: number
@@ -58,6 +59,7 @@ function createGame(
     notes: Array.from({ length: SIZE }, () =>
       Array.from({ length: SIZE }, () => [])
     ),
+    notesMode: false,
     selected: null,
     hintsUsed: 0,
     seconds: 0,
@@ -77,6 +79,7 @@ function placeholderState(): GameState {
     notes: Array.from({ length: SIZE }, () =>
       Array.from({ length: SIZE }, () => [])
     ),
+    notesMode: false,
     selected: null,
     hintsUsed: 0,
     seconds: 0,
@@ -142,11 +145,9 @@ const TIER_COLORS: Record<TierName, string> = {
 
 function NumberPad({
   onDigit,
-  onErase,
   finishedDigits,
 }: {
   onDigit: (d: number) => void
-  onErase: () => void
   finishedDigits: boolean[]
 }) {
   return (
@@ -163,13 +164,6 @@ function NumberPad({
           {d}
         </button>
       ))}
-      <button
-        type="button"
-        onClick={onErase}
-        className="col-span-3 flex h-14 items-center justify-center gap-1 rounded-xl border border-slate-300 bg-white text-lg font-bold text-rose-500 transition select-none touch-manipulation active:scale-95"
-      >
-        <span aria-hidden="true">⌫</span> Erase
-      </button>
     </div>
   )
 }
@@ -393,12 +387,29 @@ export default function SudokuGame() {
     })
   }
 
+  function toggleNote(r: number, c: number, digit: number) {
+    if (state.givens[r][c] !== 0) return
+    if (state.board[r][c] !== 0) return
+    setState((prev) => {
+      const notes = prev.notes.map((row) => row.map((col) => col.slice()))
+      const arr = notes[r][c]
+      const idx = arr.indexOf(digit)
+      if (idx >= 0) arr.splice(idx, 1)
+      else arr.push(digit)
+      return { ...prev, notes }
+    })
+  }
+
   function enterDigit(digit: number) {
     if (state.won) return
     const sel = state.selected
     if (!sel) return
     const [r, c] = sel
     if (state.givens[r][c] !== 0) return
+    if (state.notesMode) {
+      toggleNote(r, c, digit)
+      return
+    }
     const current = state.board[r][c]
     if (current === digit) {
       eraseCell(r, c)
@@ -425,6 +436,10 @@ export default function SudokuGame() {
     if (state.hintsUsed >= MAX_HINTS) return
     setCorrect(r, c, state.solution[r][c])
     setState((prev) => ({ ...prev, hintsUsed: prev.hintsUsed + 1 }))
+  }
+
+  function toggleNotesMode() {
+    setState((prev) => ({ ...prev, notesMode: !prev.notesMode }))
   }
 
   function moveSelection(dr: number, dc: number) {
@@ -454,6 +469,7 @@ export default function SudokuGame() {
       else if (e.key === "ArrowLeft") moveSelection(0, -1)
       else if (e.key === "ArrowRight") moveSelection(0, 1)
       else if (e.key.toLowerCase() === "h") revealHint()
+      else if (e.key.toLowerCase() === "n") toggleNotesMode()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -699,10 +715,9 @@ export default function SudokuGame() {
 
           <NumberPad
             onDigit={enterDigit}
-            onErase={eraseSelected}
             finishedDigits={finishedDigits}
           />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={requestNew}
@@ -717,6 +732,17 @@ export default function SudokuGame() {
               disabled={state.hintsUsed >= MAX_HINTS}
             >
               <span aria-hidden="true">💡</span> Hint {MAX_HINTS - state.hintsUsed}
+            </button>
+            <button
+              type="button"
+              onClick={toggleNotesMode}
+              className={`flex min-h-12 items-center justify-center gap-1 rounded-lg text-sm font-bold select-none active:scale-95 ${
+                state.notesMode
+                  ? "bg-blue-100 text-blue-700"
+                  : "border border-slate-300 bg-white text-slate-600"
+              }`}
+            >
+              <span aria-hidden="true">✏️</span> Notes
             </button>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
