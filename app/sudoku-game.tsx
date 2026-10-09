@@ -640,7 +640,7 @@ export default function SudokuGame() {
         </div>
 
         {/* Right column: difficulty, level + timer above the number pad */}
-        <div className="flex w-full flex-col items-stretch gap-3 sm:w-72">
+        <div className="flex w-full flex-col items-stretch gap-3 min-[560px]:w-64">
           {/* Difficulty selector */}
           <div className="flex w-full items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm">
             <label

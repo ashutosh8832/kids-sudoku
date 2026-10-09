@@ -1,4 +1,6 @@
-const CACHE_NAME = "kids-sudoku-cache-v1";
+const CACHE_NAME = "kids-sudoku-cache-v2";
+
+const APP_SHELL = ["/"];
 
 const FALLBACK_PAGE =
   "<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Kids Sudoku</title>" +
@@ -9,21 +11,32 @@ const FALLBACK_PAGE =
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
-  event.waitUntil(self.caches.default.delete(CACHE_NAME));
+  event.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .catch(() => {})
+  );
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      )
+  );
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim({ scope: "/" }));
+  event.waitUntil(self.clients.claim());
 });
 
 self.addEventListener("fetch", (event) => {
-  const request = event.request;
-  if (request.method !== "GET") return;
-  event.respondWith(handle(request));
+  if (event.request.method !== "GET") return;
+  event.respondWith(handle(event.request));
 });
 
 async function handle(request) {
-  const cache = await self.caches.default.open(CACHE_NAME);
+  const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
   if (cached) return cached;
 
@@ -34,7 +47,8 @@ async function handle(request) {
     }
     return response;
   } catch (error) {
-    if (cached) return cached;
+    const fallback = await cache.match("/");
+    if (fallback) return fallback;
     return new Response(FALLBACK_PAGE, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
