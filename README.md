@@ -2,7 +2,7 @@
 
 A progress-based 9×9 Sudoku for young players, built as a Progressive Web App with Next.js.
 
-- Starts easy (Level 1 ≈ 47 givens) and removes 2 given numbers per level for a gentle difficulty ramp (Level 10≈ and up: 26 givens).
+- Five difficulty tiers — **Very Easy**, **Easy**, **Medium**, **Hard**, **Insane** — with ~40 puzzles each (200 levels total), selectable via a dropdown. Difficulty rises gently within a tier and steps up at the next (Very Easy ≈ 56→50 givens, Easy ≈ 49→44, Medium ≈ 43→38, Hard ≈ 37→32, Insane ≈ 31→26).
 - Wrong entries flash the cell red and are removed automatically — no mistakes limit, infinite retries.
 - Touch-first UI sized for iPad, with smart highlighting of the selected cell, matching numbers, and completed rows/columns/boxes.
 - Installable PWA: `display: standalone`, generated app icons, and an offline cache via a service worker.

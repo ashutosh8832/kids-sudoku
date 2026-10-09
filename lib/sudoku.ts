@@ -150,6 +150,21 @@ export function isPuzzleSolved(board: Grid, solution: Grid): boolean {
   return true
 }
 
+export function completedDigits(board: Grid, solution: Grid): boolean[] {
+  const correct = new Array<number>(SIZE + 1).fill(0)
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const v = board[r][c]
+      if (v !== 0 && v === solution[r][c]) correct[v]++
+    }
+  }
+  const finished = new Array<boolean>(SIZE + 1).fill(false)
+  for (let d = 1; d <= SIZE; d++) {
+    finished[d] = correct[d] === SIZE
+  }
+  return finished
+}
+
 export interface GroupCompletion {
   rows: boolean[]
   cols: boolean[]
@@ -177,8 +192,39 @@ export function groupsCompleted(board: Grid, solution: Grid): GroupCompletion {
   return result
 }
 
+export const TIERS = [
+  "Very Easy",
+  "Easy",
+  "Medium",
+  "Hard",
+  "Insane",
+] as const
+export type TierName = (typeof TIERS)[number]
+export const GAMES_PER_TIER = 40
+export const MAX_LEVEL = TIERS.length * GAMES_PER_TIER
+
+const TIER_RANGES: Record<TierName, [number, number]> = {
+  "Very Easy": [56, 50],
+  Easy: [49, 44],
+  Medium: [43, 38],
+  Hard: [37, 32],
+  Insane: [31, 26],
+}
+
+export function tierForLevel(level: number): TierName {
+  const clamped = Math.max(1, level)
+  const index = Math.min(TIERS.length - 1, Math.floor((clamped - 1) / GAMES_PER_TIER))
+  return TIERS[index]
+}
+
 export function givensForLevel(level: number): number {
-  return Math.max(26, 47 - (level - 1) * 2)
+  const clamped = Math.max(1, level)
+  const tier = tierForLevel(clamped)
+  const [start, end] = TIER_RANGES[tier]
+  if (clamped >= MAX_LEVEL) return end
+  const index = (clamped - 1) % GAMES_PER_TIER
+  const fraction = GAMES_PER_TIER > 1 ? index / (GAMES_PER_TIER - 1) : 0
+  return Math.round(start - (start - end) * fraction)
 }
 
 export function starsFor(_level: number, hintsUsed: number): number {

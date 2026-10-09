@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  GAMES_PER_TIER,
   Grid,
+  MAX_LEVEL,
+  TIERS,
+  TierName,
   cloneGrid,
+  completedDigits,
   createPuzzle,
   emptyGrid,
   generateSolution,
@@ -13,20 +18,22 @@ import {
   sameBox,
   SIZE,
   starsFor,
+  tierForLevel,
 } from "@/lib/sudoku";
 
 const SAVE_KEY = "kids-sudoku/save/v1"
 const MAX_HINTS = 3
 const FLASH_MS = 700
+const AUTO_ADVANCE_MS = 3500
 
 interface GameState {
   level: number
   bestLevel: number
+  status: "home" | "playing"
   givens: Grid
   solution: Grid
   board: Grid
   notes: number[][][]
-  notesMode: boolean
   selected: [number, number] | null
   hintsUsed: number
   seconds: number
@@ -34,19 +41,23 @@ interface GameState {
   pending: boolean
 }
 
-function createGame(level: number, bestLevel: number): GameState {
+function createGame(
+  level: number,
+  bestLevel: number,
+  status: "home" | "playing" = "playing"
+): GameState {
   const solution = generateSolution()
   const givens = createPuzzle(solution, givensForLevel(level))
   return {
     level,
     bestLevel,
+    status,
     givens,
     solution,
     board: cloneGrid(givens),
     notes: Array.from({ length: SIZE }, () =>
       Array.from({ length: SIZE }, () => [])
     ),
-    notesMode: false,
     selected: null,
     hintsUsed: 0,
     seconds: 0,
@@ -59,13 +70,13 @@ function placeholderState(): GameState {
   return {
     level: 1,
     bestLevel: 1,
+    status: "home",
     givens: emptyGrid(),
     solution: emptyGrid(),
     board: emptyGrid(),
     notes: Array.from({ length: SIZE }, () =>
       Array.from({ length: SIZE }, () => [])
     ),
-    notesMode: false,
     selected: null,
     hintsUsed: 0,
     seconds: 0,
@@ -93,6 +104,8 @@ function loadState(): GameState | null {
         Array.from({ length: SIZE }, () => [])
       )
     }
+    data.status = "home"
+    data.won = false
     return data
   } catch {
     return null
@@ -119,35 +132,33 @@ function borderClasses(r: number, c: number): string {
   return `${top} ${bottom} ${left} ${right}`
 }
 
+const TIER_COLORS: Record<TierName, string> = {
+  "Very Easy": "text-teal-600",
+  Easy: "text-emerald-600",
+  Medium: "text-amber-600",
+  Hard: "text-orange-600",
+  Insane: "text-rose-600",
+}
+
 function NumberPad({
   onDigit,
   onErase,
-  height,
+  finishedDigits,
 }: {
   onDigit: (d: number) => void
   onErase: () => void
-  height: number
+  finishedDigits: boolean[]
 }) {
   return (
-    <div className="grid w-full grid-cols-5 gap-2">
-      {[1, 2, 3, 4, 5].map((d) => (
+    <div className="grid w-full grid-cols-3 gap-2">
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
         <button
           key={d}
           type="button"
           onClick={() => onDigit(d)}
-          className="flex items-center justify-center rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-700 transition select-none touch-manipulation active:scale-95"
-          style={{ height }}
-        >
-          {d}
-        </button>
-      ))}
-      {[6, 7, 8, 9].map((d) => (
-        <button
-          key={d}
-          type="button"
-          onClick={() => onDigit(d)}
-          className="flex items-center justify-center rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-700 transition select-none touch-manipulation active:scale-95"
-          style={{ height }}
+          disabled={finishedDigits[d]}
+          className="flex h-16 items-center justify-center rounded-xl border border-slate-300 bg-white text-2xl font-bold text-slate-700 transition select-none touch-manipulation active:scale-95 disabled:cursor-default disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+          aria-label={`Number ${d}`}
         >
           {d}
         </button>
@@ -155,27 +166,26 @@ function NumberPad({
       <button
         type="button"
         onClick={onErase}
-        className="flex items-center justify-center rounded-xl border border-slate-300 bg-white text-lg font-bold text-rose-500 transition select-none touch-manipulation active:scale-95"
-        style={{ height }}
+        className="col-span-3 flex h-14 items-center justify-center gap-1 rounded-xl border border-slate-300 bg-white text-lg font-bold text-rose-500 transition select-none touch-manipulation active:scale-95"
       >
-        ⌫
+        <span aria-hidden="true">⌫</span> Erase
       </button>
     </div>
   )
 }
 
 export default function SudokuGame() {
-  const [state, setState] = useState<GameState>(() => {
-    const saved = typeof window !== "undefined" ? loadState() : null
-    return saved ?? placeholderState()
-  })
+  const [state, setState] = useState<GameState>(placeholderState)
 
   useEffect(() => {
     if (!state.pending) return
-    // Deferring puzzle generation to the client is required by Next.js
-    // prerendering: Math.random() must not run while prerendering the page.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState((prev) => createGame(prev.level, prev.bestLevel))
+    const saved = loadState()
+    if (saved) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState(saved)
+    } else {
+      setState((prev) => createGame(prev.level, prev.bestLevel, "home"))
+    }
   }, [state.pending])
 
   const [flashCells, setFlashCells] = useState<Map<string, number>>(
@@ -183,6 +193,7 @@ export default function SudokuGame() {
   )
   const flashTokens = useRef(new Map<string, number>())
   const flashTimers = useRef(new Map<string, number>())
+  const [confirmNew, setConfirmNew] = useState(false)
 
   const boardRef = useRef<HTMLDivElement>(null)
   const [cellPx, setCellPx] = useState(40)
@@ -208,12 +219,24 @@ export default function SudokuGame() {
   }, [state])
 
   useEffect(() => {
-    if (state.pending || state.won) return
+    if (state.pending || state.status !== "playing" || state.won) return
     const id = window.setInterval(() => {
       setState((prev) => ({ ...prev, seconds: prev.seconds + 1 }))
     }, 1000)
     return () => window.clearInterval(id)
-  }, [state.pending, state.won])
+  }, [state.pending, state.status, state.won])
+
+  useEffect(() => {
+    if (!state.won) return
+    const id = window.setTimeout(() => {
+      clearAllFlashes()
+      setState((prev) => {
+        const level = Math.min(MAX_LEVEL, prev.level + 1)
+        return createGame(level, Math.max(prev.bestLevel, level), "playing")
+      })
+    }, AUTO_ADVANCE_MS)
+    return () => window.clearTimeout(id)
+  }, [state.won])
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") return
@@ -223,6 +246,11 @@ export default function SudokuGame() {
 
   const completed = useMemo(
     () => groupsCompleted(state.board, state.solution),
+    [state.board, state.solution]
+  )
+
+  const finishedDigits = useMemo(
+    () => completedDigits(state.board, state.solution),
     [state.board, state.solution]
   )
 
@@ -278,24 +306,63 @@ export default function SudokuGame() {
     flashTimers.current.set(key, timer)
   }
 
+  function startGame() {
+    if (state.pending) return
+    setState((prev) => {
+      if (prev.won) {
+        return createGame(prev.level, prev.bestLevel, "playing")
+      }
+      return { ...prev, status: "playing" }
+    })
+  }
+
+  function hasProgress(): boolean {
+    if (state.seconds > 0 || state.hintsUsed > 0) return true
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (state.board[r][c] !== state.givens[r][c]) return true
+        if (state.notes[r][c].length > 0) return true
+      }
+    }
+    return false
+  }
+
+  function requestNew() {
+    if (hasProgress()) {
+      setConfirmNew(true)
+    } else {
+      newGameAt(state.level)
+    }
+  }
+
   function newGameAt(level: number) {
     clearAllFlashes()
-    setState((prev) => createGame(level, prev.bestLevel))
+    setState((prev) => createGame(level, prev.bestLevel, "playing"))
+  }
+
+  function selectTier(tier: string) {
+    const index = TIERS.indexOf(tier as TierName)
+    if (index < 0) return
+    const level = index * GAMES_PER_TIER + 1
+    clearAllFlashes()
+    setState((prev) =>
+      createGame(level, Math.max(prev.bestLevel, level), prev.status)
+    )
   }
 
   function changeLevel(delta: number) {
     clearAllFlashes()
     setState((prev) => {
-      const level = Math.max(1, prev.level + delta)
-      return createGame(level, Math.max(prev.bestLevel, level))
+      const level = Math.min(MAX_LEVEL, Math.max(1, prev.level + delta))
+      return createGame(level, Math.max(prev.bestLevel, level), "playing")
     })
   }
 
   function nextLevel() {
     clearAllFlashes()
     setState((prev) => {
-      const level = prev.level + 1
-      return createGame(level, Math.max(prev.bestLevel, level))
+      const level = Math.min(MAX_LEVEL, prev.level + 1)
+      return createGame(level, Math.max(prev.bestLevel, level), "playing")
     })
   }
 
@@ -332,29 +399,12 @@ export default function SudokuGame() {
     })
   }
 
-  function toggleNote(r: number, c: number, digit: number) {
-    if (state.givens[r][c] !== 0) return
-    if (state.board[r][c] !== 0) return
-    setState((prev) => {
-      const notes = prev.notes.map((row) => row.map((col) => col.slice()))
-      const arr = notes[r][c]
-      const idx = arr.indexOf(digit)
-      if (idx >= 0) arr.splice(idx, 1)
-      else arr.push(digit)
-      return { ...prev, notes }
-    })
-  }
-
   function enterDigit(digit: number) {
     if (state.won) return
     const sel = state.selected
     if (!sel) return
     const [r, c] = sel
     if (state.givens[r][c] !== 0) return
-    if (state.notesMode) {
-      toggleNote(r, c, digit)
-      return
-    }
     const current = state.board[r][c]
     if (current === digit) {
       eraseCell(r, c)
@@ -381,10 +431,6 @@ export default function SudokuGame() {
     if (state.hintsUsed >= MAX_HINTS) return
     setCorrect(r, c, state.solution[r][c])
     setState((prev) => ({ ...prev, hintsUsed: prev.hintsUsed + 1 }))
-  }
-
-  function toggleNotesMode() {
-    setState((prev) => ({ ...prev, notesMode: !prev.notesMode }))
   }
 
   function moveSelection(dr: number, dc: number) {
@@ -414,7 +460,6 @@ export default function SudokuGame() {
       else if (e.key === "ArrowLeft") moveSelection(0, -1)
       else if (e.key === "ArrowRight") moveSelection(0, 1)
       else if (e.key.toLowerCase() === "h") revealHint()
-      else if (e.key.toLowerCase() === "n") toggleNotesMode()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -529,7 +574,23 @@ export default function SudokuGame() {
   const rowCount = completed.rows.filter(Boolean).length
   const colCount = completed.cols.filter(Boolean).length
   const boxCount = completed.boxes.filter(Boolean).length
-  const padHeight = Math.max(52, Math.round(cellPx * 1.25))
+
+  if (state.pending) {
+    return (
+      <main className="flex min-h-full flex-col items-center justify-center gap-4 px-2 font-sans">
+        <div className="flex flex-col items-center gap-3">
+          <span
+            className="h-14 w-14 animate-spin rounded-full border-4 border-slate-300 border-t-slate-500"
+            aria-hidden="true"
+          />
+          <p className="text-lg font-semibold text-slate-600">Loading...</p>
+        </div>
+      </main>
+    )
+  }
+
+  const tierName = tierForLevel(state.level)
+  const tierColor = TIER_COLORS[tierName]
 
   if (state.pending) {
     return (
@@ -546,90 +607,130 @@ export default function SudokuGame() {
   }
 
   return (
-    <main className="flex min-h-full flex-col items-center gap-4 px-2 font-sans">
-      <div className="flex w-full flex-col items-center gap-3 max-w-[720px]">
-        {/* Header */}
-        <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-2 shadow-sm">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-bold text-slate-500">Level</span>
+    <main className="flex min-h-full flex-col items-center gap-4 px-2 pt-4 font-sans">
+      <div className="flex w-full flex-wrap items-start justify-center gap-4 max-w-[1024px]">
+        {/* Sudoku board — its own frame */}
+        <div className="flex min-w-0 flex-1 items-start justify-center">
+          <div
+            className="relative"
+            style={{
+              width: "min(100%, 720px, max(240px, calc(100vh - 160px)))",
+            }}
+          >
+            <div
+              ref={boardRef}
+              className="grid w-full grid-cols-9 overflow-hidden rounded-2xl border-4 border-slate-500 bg-white shadow-lg"
+            >
+              {Array.from({ length: SIZE }, (_, r) =>
+                Array.from({ length: SIZE }, (_, c) => renderCell(r, c))
+              ).flat()}
+            </div>
+            {state.status === "home" ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-slate-50/85 backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={startGame}
+                  className="flex h-16 min-w-48 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-8 text-2xl font-extrabold text-white shadow-md transition select-none active:scale-95"
+                >
+                  Start
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Right column: difficulty, level + timer above the number pad */}
+        <div className="flex w-full flex-col items-stretch gap-3 sm:w-72">
+          {/* Difficulty selector */}
+          <div className="flex w-full items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm">
+            <label
+              htmlFor="difficulty"
+              className="text-sm font-bold text-slate-500"
+            >
+              Difficulty
+            </label>
+            <select
+              id="difficulty"
+              value={tierName}
+              onChange={(e) => selectTier(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm font-bold text-slate-800 select-none"
+            >
+              {TIERS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Level + time */}
+          <div className="flex w-full items-center justify-between gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                aria-label="Previous level"
+                onClick={() => changeLevel(-1)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white text-2xl font-bold leading-none text-slate-500 shadow-sm select-none active:scale-95"
+              >
+                <span aria-hidden="true">‹</span>
+              </button>
+              <div className="flex flex-col items-center leading-tight">
+                <span
+                  className={`text-[10px] font-extrabold uppercase tracking-wider ${tierColor}`}
+                >
+                  {tierName}
+                </span>
+                <span className="text-xl font-extrabold tabular-nums text-slate-800">
+                  {state.level}
+                </span>
+              </div>
+              <button
+                type="button"
+                aria-label="Next level"
+                onClick={() => changeLevel(1)}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white text-2xl font-bold leading-none text-slate-500 shadow-sm select-none active:scale-95"
+              >
+                <span aria-hidden="true">›</span>
+              </button>
+            </div>
+            <div className="flex flex-col items-center leading-tight">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Time
+              </span>
+              <span className="tabular-nums text-base font-bold text-slate-700">
+                {timeLabel(state.seconds)}
+              </span>
+            </div>
+          </div>
+
+          <NumberPad
+            onDigit={enterDigit}
+            onErase={eraseSelected}
+            finishedDigits={finishedDigits}
+          />
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              aria-label="Previous level"
-              onClick={() => changeLevel(-1)}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-lg font-bold text-slate-600 active:scale-95 select-none"
+              onClick={requestNew}
+              className="flex min-h-12 items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white text-sm font-bold text-slate-600 active:scale-95 select-none"
             >
-              −
+              <span aria-hidden="true">↻</span> New
             </button>
-            <span className="w-8 text-center text-lg font-extrabold text-slate-800">
-              {state.level}
-            </span>
             <button
               type="button"
-              aria-label="Next level"
-              onClick={() => changeLevel(1)}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-lg font-bold text-slate-600 active:scale-95 select-none"
+              onClick={revealHint}
+              className="flex min-h-12 items-center justify-center gap-1 rounded-lg bg-amber-100 text-sm font-bold text-amber-800 active:scale-95 select-none disabled:opacity-40"
+              disabled={state.hintsUsed >= MAX_HINTS}
             >
-              +
+              <span aria-hidden="true">💡</span> Hint {MAX_HINTS - state.hintsUsed}
             </button>
           </div>
-          <div className="flex items-center gap-1.5 px-4">
-            <span aria-hidden="true" className="text-lg">⏱</span>
-            <span className="tabular-nums text-base font-bold text-slate-700">
-              {timeLabel(state.seconds)}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-1">
+          <div className="flex flex-wrap items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
             {chip("Rows", rowCount, SIZE)}
             {chip("Cols", colCount, SIZE)}
             {chip("Boxes", boxCount, 9)}
           </div>
         </div>
-
-        {/* Board */}
-        <div
-          ref={boardRef}
-          className="grid grid-cols-9 overflow-hidden rounded-md bg-white shadow-md"
-          style={{
-            width: "min(100%, 720px, max(280px, calc(100vh - 360px)))",
-          }}
-        >
-          {Array.from({ length: SIZE }, (_, r) =>
-            Array.from({ length: SIZE }, (_, c) => renderCell(r, c))
-          ).flat()}
-        </div>
-
-        {/* Actions */}
-        <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5">
-          <button
-            type="button"
-            onClick={() => newGameAt(state.level)}
-            className="flex min-h-11 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-300 bg-white text-sm font-bold text-slate-600 active:scale-95 select-none"
-          >
-            <span aria-hidden="true">↻</span> New
-          </button>
-          <button
-            type="button"
-            onClick={revealHint}
-            className="flex min-h-11 flex-1 items-center justify-center gap-1 rounded-lg bg-amber-100 text-sm font-bold text-amber-800 active:scale-95 select-none disabled:opacity-40"
-            disabled={state.hintsUsed >= MAX_HINTS}
-          >
-            <span aria-hidden="true">💡</span> Hint {MAX_HINTS - state.hintsUsed}
-          </button>
-          <button
-            type="button"
-            onClick={toggleNotesMode}
-            className={`flex min-h-11 flex-1 items-center justify-center gap-1 rounded-lg text-sm font-bold select-none active:scale-95 ${
-              state.notesMode
-                ? "bg-blue-100 text-blue-700"
-                : "border border-slate-300 bg-white text-slate-600"
-            }`}
-          >
-            <span aria-hidden="true">✏️</span> Notes
-          </button>
-        </div>
-
-        {/* Number pad */}
-        <NumberPad onDigit={enterDigit} onErase={eraseSelected} height={padHeight} />
       </div>
 
       {/* Win overlay */}
@@ -682,6 +783,45 @@ export default function SudokuGame() {
             >
               Play Again
             </button>
+          </div>
+          <p className="text-sm font-semibold text-slate-400">
+            Next level coming up…
+          </p>
+        </div>
+      ) : null}
+
+      {/* New puzzle confirmation */}
+      {confirmNew ? (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 px-4 backdrop-blur-sm">
+          <div className="pop-in flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center shadow-xl">
+            <div className="text-4xl" aria-hidden="true">
+              🔁
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-800">
+              Start a new puzzle?
+            </h2>
+            <p className="text-base font-medium text-slate-500">
+              The current game will be lost.
+            </p>
+            <div className="flex w-full gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmNew(false)}
+                className="flex h-14 flex-1 items-center justify-center rounded-2xl border border-slate-300 bg-white text-base font-bold text-slate-600 active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmNew(false)
+                  newGameAt(state.level)
+                }}
+                className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-blue-600 text-base font-extrabold text-white active:scale-95"
+              >
+                New Puzzle
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
